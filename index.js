@@ -4,10 +4,10 @@ const app = express();
 const http = require('http').createServer(app);
 const io = require('socket.io')(http, { cors: { origin: "*" } });
 
-const rooms = {};
+const rooms = {}; // store metadata of each room
 
 io.on('connection', socket => {
-  console.log('client connected', socket.id);
+  console.log('Client connected:', socket.id);
 
   socket.on('join-room', ({ meetingId, userId, name, role }) => {
     socket.join(meetingId);
@@ -15,6 +15,9 @@ io.on('connection', socket => {
     socket.userId = userId;
     socket.name = name || 'Anonymous';
     socket.role = role || 'student';
+
+    if (!rooms[meetingId]) rooms[meetingId] = {};
+    rooms[meetingId][socket.id] = { userId, name: socket.name, role: socket.role };
 
     // Notify existing users
     socket.to(meetingId).emit('user-joined', {
@@ -24,9 +27,12 @@ io.on('connection', socket => {
       role: socket.role
     });
 
-    // Send list of existing clients to this user
-    const clients = Array.from(io.sockets.adapter.rooms.get(meetingId) || []);
-    socket.emit('room-clients', clients.filter(id => id !== socket.id));
+    // Send current users to new joiner
+    const clients = Object.entries(rooms[meetingId])
+      .filter(([id]) => id !== socket.id)
+      .map(([id, info]) => ({ socketId: id, ...info }));
+
+    socket.emit('room-clients', clients);
   });
 
   socket.on('signal', ({ to, data }) => {
@@ -40,8 +46,9 @@ io.on('connection', socket => {
   socket.on('disconnect', () => {
     if (socket.meetingId) {
       socket.to(socket.meetingId).emit('user-left', { socketId: socket.id });
+      if (rooms[socket.meetingId]) delete rooms[socket.meetingId][socket.id];
     }
-    console.log('client disconnected', socket.id);
+    console.log('Client disconnected:', socket.id);
   });
 });
 
